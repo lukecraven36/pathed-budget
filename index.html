@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="theme-color" content="#0a0c13"/>
+<title>Budget · Pathed</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #0a0c13; min-height: 100%; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+const STORAGE_KEY = "budget-planner-v2";
+
+const CATEGORIES = [
+  "Housing","Utilities","Groceries","Transport","Subscriptions",
+  "Dining & Takeaway","Health & Fitness","Personal Care","Clothing",
+  "Entertainment","Insurance","Loans & Finance","Savings","Gifts","Other"
+];
+
+const CAT_ICON = {
+  "Housing":"🏠","Utilities":"⚡","Groceries":"🛒","Transport":"🚗",
+  "Subscriptions":"📱","Dining & Takeaway":"🍽️","Health & Fitness":"💪",
+  "Personal Care":"🧴","Clothing":"👗","Entertainment":"🎬",
+  "Insurance":"🛡️","Loans & Finance":"🏦","Savings":"💎","Gifts":"🎁","Other":"📦"
+};
+
+const CAT_COLOR = [
+  "#6c8ef5","#f5a66c","#5af5a6","#f56c6c","#c46cf5",
+  "#f5d76c","#6cf5e8","#f56ca8","#a8f56c","#6caef5",
+  "#f5906c","#6cf5b8","#b8f56c","#f56ce0","#8890a8"
+];
+
+const fmt = n => `£${Math.abs(n).toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+const today = () => new Date().toISOString().split("T")[0];
+const daysUntil = dateStr => {
+  if (!dateStr) return null;
+  const diff = new Date(dateStr) - new Date();
+  return Math.ceil(diff / (1000*60*60*24));
+};
+
+const defaultState = {
+  openingBalance: 0,
+  salaryAmount: 0,
+  nextPayDate: "",
+  salarySetup: false,
+  income: [],
+  expenses: [],
+};
+
+const { useState, useEffect, useMemo, useRef } = React;
+
+// ─── ICONS (inline SVG) ───────────────────────────────────────
+const Icon = ({ name, size=18, color="currentColor" }) => {
+  const paths = {
+    home: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z M9 22V12h6v10",
+    list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+    plus: "M12 5v14M5 12h14",
+    settings: "M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z",
+    check: "M20 6L9 17l-5-5",
+    x: "M18 6L6 18M6 6l12 12",
+    edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+    trash: "M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+    income: "M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6",
+    calendar: "M3 4h18v18H3zM16 2v4M8 2v4M3 10h18",
+    alert: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+    sun: "M12 17a5 5 0 100-10 5 5 0 000 10zM12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42",
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      {(paths[name]||"").split(" M").map((d,i)=>(
+        <path key={i} d={(i===0?d:"M"+d)} />
+      ))}
+    </svg>
+  );
+};
+
+// ─── MAIN APP ─────────────────────────────────────────────────
+function BudgetPlanner() {
+  const [state, setState] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [view, setView] = useState("dashboard");
+  const [modal, setModal] = useState(null); // null | {type:'income'|'expense'|'setup', data?}
+  const [toast, setToast] = useState(null);
+  const [expFilter, setExpFilter] = useState("All");
+  const toastTimer = useRef(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      setState(saved ? JSON.parse(saved) : defaultState);
+    } catch { setState(defaultState); }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || !state) return;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  }, [state, loaded]);
+
+  const showToast = (msg, type="ok") => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  };
+
+  const upd = fn => setState(p => ({ ...p, ...fn(p) }));
+
+  // ─── CALCULATIONS ──────────────────────────────────────────
+  const calc = useMemo(() => {
+    if (!state) return {};
+    const now = new Date();
+    const cm = now.getMonth(), cy = now.getFullYear();
+
+    // Additional income (non-salary)
+    const additionalIncome = state.income.reduce((s,i) => s + Number(i.amount), 0);
+    const salary = Number(state.salaryAmount || 0);
+
+    // This month expenses
+    const monthExp = state.expenses.filter(e => {
+      if (e.recurring) return true;
+      const d = new Date(e.date);
+      return d.getMonth()===cm && d.getFullYear()===cy;
+    });
+
+    const totalExp = monthExp.reduce((s,e) => s+Number(e.amount), 0);
+    const paidAmt = state.expenses.filter(e=>e.paid).reduce((s,e)=>s+Number(e.amount),0);
+
+    // Opening balance = what's in account RIGHT NOW (user sets this)
+    // Live balance = opening - paid out so far this period
+    const liveBalance = Number(state.openingBalance) - paidAmt;
+
+    // Forecast: from opening, subtract ALL expected expenses, add additional income
+    // (salary is already expected to land on pay date — included in nextMonthOpening)
+    const forecastEnd = Number(state.openingBalance) + additionalIncome - totalExp;
+
+    // Next month opening = end forecast + salary landing
+    const nextOpening = forecastEnd + salary;
+
+    // Due before payday
+    const payDate = state.nextPayDate ? new Date(state.nextPayDate) : null;
+    const dueBefore = payDate ? state.expenses.filter(e => {
+      if (e.paid) return false;
+      if (e.recurring) return true;
+      return new Date(e.date) <= payDate;
+    }) : state.expenses.filter(e => !e.paid);
+    const dueTotal = dueBefore.reduce((s,e)=>s+Number(e.amount),0);
+
+    // Daily budget remaining
+    const days = daysUntil(state.nextPayDate);
+    const dailyBudget = days && days > 0 ? liveBalance / days : null;
+
+    // By category
+    const byCat = {};
+    monthExp.forEach(e => { byCat[e.category] = (byCat[e.category]||0) + Number(e.amount); });
+    const catList = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+
+    return {
+      salary, additionalIncome,
+      totalIncome: salary + additionalIncome,
+      totalExp, paidAmt, liveBalance,
+      forecastEnd, nextOpening,
+      dueBefore, dueTotal,
+      days, dailyBudget,
+      byCat, catList,
+      recurringTotal: monthExp.filter(e=>e.recurring).reduce((s,e)=>s+Number(e.amount),0),
+      oneOffTotal: monthExp.filter(e=>!e.recurring).reduce((s,e)=>s+Number(e.amount),0),
+    };
+  }, [state]);
+
+  if (!loaded || !state) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0a0c13",color:"#fff",fontFamily:"monospace",fontSize:14}}>
+      Loading…
+    </div>
+  );
+
+  // First-time setup
+  if (!state.salarySetup) return (
+    <Setup onDone={data => { upd(()=>({...data, salarySetup:true})); }} />
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0a0c13",color:"#dde1f0",fontFamily:"'DM Sans',sans-serif",paddingBottom:80}}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+      <GlobalStyles/>
+
+      {/* ── TOP BAR ── */}
+      <div style={{background:"#0d0f19",borderBottom:"1px solid #1c1f30",padding:"0 20px",height:54,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50}}>
+        <div style={{fontFamily:"Instrument Serif, serif",fontSize:20,color:"#6c8ef5",letterSpacing:-0.3}}>
+          Budget
+        </div>
+        {calc.days !== null && calc.days >= 0 && (
+          <div style={{background:"#1c1f30",border:"1px solid #2a2e45",borderRadius:20,padding:"4px 12px",fontSize:12,color:"#8890a8",display:"flex",alignItems:"center",gap:6}}>
+            <Icon name="calendar" size={12} color="#6c8ef5"/>
+            <span style={{color:"#6c8ef5",fontWeight:600}}>{calc.days}d</span>
+            <span>until payday</span>
+          </div>
+        )}
+        <button className="icon-btn" onClick={()=>setView("settings")}>
+          <Icon name="settings" size={18} color={view==="settings"?"#6c8ef5":"#8890a8"}/>
+        </button>
+      </div>
+
+      {/* ── CONTENT ── */}
+      <div style={{maxWidth:600,margin:"0 auto",padding:"20px 16px"}}>
+
+        {view==="dashboard" && <Dashboard state={state} calc={calc} setModal={setModal} setView={setView}/>}
+        {view==="expenses" && <Expenses state={state} upd={upd} calc={calc} setModal={setModal} showToast={showToast} expFilter={expFilter} setExpFilter={setExpFilter}/>}
+        {view==="income" && <IncomeView state={state} upd={upd} calc={calc} setModal={setModal} showToast={showToast}/>}
+        {view==="settings" && <Settings state={state} upd={upd} showToast={showToast}/>}
+
+      </div>
+
+      {/* ── BOTTOM NAV ── */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#0d0f19",borderTop:"1px solid #1c1f30",display:"flex",zIndex:50,paddingBottom:"env(safe-area-inset-bottom)"}}>
+        {[
+          {id:"dashboard",icon:"home",label:"Home"},
+          {id:"expenses",icon:"list",label:"Expenses"},
+          {id:"income",icon:"income",label:"Income"},
+        ].map(tab=>(
+          <button key={tab.id} onClick={()=>setView(tab.id)}
+            style={{flex:1,background:"none",border:"none",padding:"12px 8px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:view===tab.id?"#6c8ef5":"#555a72",transition:"color 0.15s"}}>
+            <Icon name={tab.icon} size={20} color={view===tab.id?"#6c8ef5":"#555a72"}/>
+            <span style={{fontSize:10,fontWeight:600,letterSpacing:0.3}}>{tab.label}</span>
+            {view===tab.id && <div style={{position:"absolute",bottom:0,width:40,height:2,background:"#6c8ef5",borderRadius:1}}/>}
+          </button>
+        ))}
+      </div>
+
+      {/* ── FAB ── */}
+      {view==="expenses" && (
+        <button onClick={()=>setModal({type:"expense"})}
+          style={{position:"fixed",bottom:76,right:20,width:52,height:52,borderRadius:"50%",background:"#6c8ef5",border:"none",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(108,142,245,0.4)",zIndex:49,cursor:"pointer",transition:"transform 0.15s"}}
+          onMouseOver={e=>e.currentTarget.style.transform="scale(1.08)"}
+          onMouseOut={e=>e.currentTarget.style.transform="scale(1)"}>
+          <Icon name="plus" size={24} color="#fff"/>
+        </button>
+      )}
+      {view==="income" && (
+        <button onClick={()=>setModal({type:"income"})}
+          style={{position:"fixed",bottom:76,right:20,width:52,height:52,borderRadius:"50%",background:"#5af5a6",border:"none",color:"#0a0c13",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(90,245,166,0.35)",zIndex:49,cursor:"pointer",transition:"transform 0.15s"}}
+          onMouseOver={e=>e.currentTarget.style.transform="scale(1.08)"}
+          onMouseOut={e=>e.currentTarget.style.transform="scale(1)"}>
+          <Icon name="plus" size={24} color="#0a0c13"/>
+        </button>
+      )}
+
+      {/* ── MODALS ── */}
+      {modal?.type==="expense" && (
+        <ExpenseModal expense={modal.data}
+          onSave={exp=>{
+            if(modal.data){ upd(p=>({expenses:p.expenses.map(e=>e.id===exp.id?exp:e)})); showToast("Expense updated"); }
+            else { upd(p=>({expenses:[...p.expenses,{...exp,id:Date.now()}]})); showToast("Expense logged ✓"); }
+            setModal(null);
+          }}
+          onClose={()=>setModal(null)}/>
+      )}
+      {modal?.type==="income" && (
+        <IncomeModal income={modal.data}
+          onSave={inc=>{
+            if(inc.isSalary){ upd(()=>({salaryAmount:parseFloat(inc.amount)||0})); showToast("Salary updated ✓"); }
+            else if(modal.data){ upd(p=>({income:p.income.map(i=>i.id===inc.id?inc:i)})); showToast("Income updated"); }
+            else { upd(p=>({income:[...p.income,{...inc,id:Date.now()}]})); showToast("Income added ✓"); }
+            setModal(null);
+          }}
+          onClose={()=>setModal(null)}/>
+      )}
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:toast.type==="err"?"#3a1a1a":"#1c1f30",border:`1px solid ${toast.type==="err"?"#e85a5a44":"#2a2e45"}`,color:"#dde1f0",padding:"11px 22px",borderRadius:10,fontSize:13,fontWeight:500,zIndex:200,whiteSpace:"nowrap",animation:"fadeUp 0.25s ease",pointerEvents:"none"}}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SETUP ────────────────────────────────────────────────────
+function Setup({ onDone }) {
+  const [salary, setSalary] = useState("");
+  const [balance, setBalance] = useState("");
+  const [payDate, setPayDate] = useState("");
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0a0c13",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'DM Sans',sans-serif"}}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
+      <GlobalStyles/>
+      <div style={{width:"100%",maxWidth:420}}>
+        <div style={{fontFamily:"Instrument Serif,serif",fontSize:36,color:"#6c8ef5",marginBottom:8,lineHeight:1.1}}>
+          Let's set up<br/><em>your budget.</em>
+        </div>
+        <p style={{color:"#8890a8",fontSize:14,marginBottom:32,lineHeight:1.6}}>Three quick things and you're good to go.</p>
+
+        <div style={{display:"flex",flexDirection:"column",gap:20}}>
+          <Field label="What's in your account right now? (£)" icon="💳">
+            <input type="number" step="0.01" placeholder="e.g. 842.50" value={balance} onChange={e=>setBalance(e.target.value)}/>
+          </Field>
+          <Field label="Monthly salary (£)" icon="💰">
+            <input type="number" step="0.01" placeholder="e.g. 2800.00" value={salary} onChange={e=>setSalary(e.target.value)}/>
+          </Field>
+          <Field label="Next pay date" icon="📅">
+            <input type="date" value={payDate} onChange={e=>setPayDate(e.target.value)}/>
+          </Field>
+        </div>
+
+        <button
+          onClick={()=>{
+            if(!balance||!salary) return;
+            onDone({ openingBalance:parseFloat(balance)||0, salaryAmount:parseFloat(salary)||0, nextPayDate:payDate, income:[], expenses:[] });
+          }}
+          style={{marginTop:32,width:"100%",background:"#6c8ef5",color:"#fff",border:"none",borderRadius:12,padding:"15px",fontSize:16,fontWeight:600,cursor:"pointer"}}>
+          Start tracking →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────
+function Dashboard({ state, calc, setModal, setView }) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+      {/* Hero balance */}
+      <div style={{background:"linear-gradient(135deg,#13162280,#1c1f3280)",border:"1px solid #1c1f30",borderRadius:20,padding:"24px 24px 20px"}}>
+        <div style={{fontSize:12,fontWeight:600,color:"#8890a8",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Current Balance</div>
+        <div style={{fontFamily:"Instrument Serif,serif",fontSize:52,fontWeight:400,color:calc.liveBalance>=0?"#5af5a6":"#e85a5a",lineHeight:1,marginBottom:8}}>
+          {fmt(calc.liveBalance)}
+        </div>
+        <div style={{fontSize:13,color:"#8890a8"}}>
+          Opening {fmt(state.openingBalance)} · {calc.paidAmt>0?`${fmt(calc.paidAmt)} paid out`:"nothing paid yet"}
+        </div>
+        {calc.dailyBudget !== null && (
+          <div style={{marginTop:14,background:"#0d0f19",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span style={{fontSize:12,color:"#8890a8"}}>Safe to spend per day</span>
+            <span style={{fontSize:16,fontWeight:700,color:calc.dailyBudget>=0?"#6c8ef5":"#e85a5a"}}>{fmt(calc.dailyBudget)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Key stats row */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <StatCard label="Forecast end of month" value={calc.forecastEnd} color={calc.forecastEnd>=0?"#5af5a6":"#e85a5a"}/>
+        <StatCard label="Next month opening" value={calc.nextOpening} color="#6c8ef5"
+          sub={`incl. ${fmt(calc.salary)} salary`}/>
+      </div>
+
+      {/* Due before payday */}
+      {calc.dueBefore.length > 0 && (
+        <div style={{background:"#1a0e0a",border:"1px solid #3a2010",borderRadius:16,padding:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <Icon name="alert" size={16} color="#f5a66c"/>
+            <span style={{fontSize:13,fontWeight:600,color:"#f5a66c"}}>
+              Due before payday{state.nextPayDate?` · ${new Date(state.nextPayDate).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`:""} · {fmt(calc.dueTotal)}
+            </span>
+          </div>
+          {calc.dueBefore.slice(0,4).map(e=>(
+            <div key={e.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #2a1a10"}}>
+              <span style={{fontSize:16}}>{CAT_ICON[e.category]||"📦"}</span>
+              <span style={{flex:1,fontSize:13,color:"#dde1f0"}}>{e.company}</span>
+              <span style={{fontSize:13,fontWeight:600,color:"#f5a66c"}}>-{fmt(e.amount)}</span>
+            </div>
+          ))}
+          {calc.dueBefore.length>4&&(
+            <button onClick={()=>setView("expenses")} style={{marginTop:10,background:"none",border:"none",color:"#8890a8",fontSize:12,cursor:"pointer",padding:0}}>
+              +{calc.dueBefore.length-4} more — view all expenses →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Month summary */}
+      <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,padding:18}}>
+        <div style={{fontFamily:"Instrument Serif,serif",fontSize:18,marginBottom:14}}>Month summary</div>
+        {[
+          {label:"💰 Salary",val:calc.salary,color:"#5af5a6"},
+          {label:"➕ Additional income",val:calc.additionalIncome,color:"#5af5a6"},
+          {label:"🔁 Recurring costs",val:calc.recurringTotal,color:"#e85a5a"},
+          {label:"1️⃣ One-off costs",val:calc.oneOffTotal,color:"#f5a66c"},
+          {label:"✅ Paid so far",val:calc.paidAmt,color:"#8890a8"},
+        ].map((r,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:i<4?"1px solid #1c1f30":"none",fontSize:14}}>
+            <span style={{color:"#a0a8c0"}}>{r.label}</span>
+            <span style={{color:r.color,fontWeight:600}}>{r.val>0?fmt(r.val):"—"}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Spend by category */}
+      {calc.catList.length>0 && (
+        <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,padding:18}}>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:18,marginBottom:16}}>Spend by category</div>
+          {calc.catList.map(([cat,amt],i)=>{
+            const pct = calc.totalExp>0?(amt/calc.totalExp)*100:0;
+            return (
+              <div key={cat} style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:13}}>
+                  <span>{CAT_ICON[cat]||"📦"} {cat}</span>
+                  <span style={{color:"#8890a8"}}>{fmt(amt)} <span style={{color:"#444",fontSize:11}}>({pct.toFixed(0)}%)</span></span>
+                </div>
+                <div style={{height:5,background:"#1c1f30",borderRadius:3,overflow:"hidden"}}>
+                  <div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:CAT_COLOR[i%CAT_COLOR.length],transition:"width 0.5s ease"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Recent transactions */}
+      <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,padding:18}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:18}}>Recent</div>
+          <button onClick={()=>setView("expenses")} style={{background:"none",border:"none",color:"#6c8ef5",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>View all →</button>
+        </div>
+        {state.expenses.length===0?(
+          <div style={{color:"#555a72",fontSize:13,textAlign:"center",padding:"20px 0"}}>No expenses yet. Tap + to add one.</div>
+        ):(
+          [...state.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5).map(e=>(
+            <ExpRow key={e.id} e={e} compact/>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── EXPENSES VIEW ────────────────────────────────────────────
+function Expenses({ state, upd, calc, setModal, showToast, expFilter, setExpFilter }) {
+  const filters = ["All","Recurring","One-off","Paid","Unpaid"];
+
+  const filtered = state.expenses.filter(e=>{
+    if(expFilter==="Recurring") return e.recurring;
+    if(expFilter==="One-off") return !e.recurring;
+    if(expFilter==="Paid") return e.paid;
+    if(expFilter==="Unpaid") return !e.paid;
+    return true;
+  }).sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  const filteredTotal = filtered.reduce((s,e)=>s+Number(e.amount),0);
+
+  return (
+    <div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:28,marginBottom:16}}>Expenses</div>
+
+      {/* Filter chips */}
+      <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,marginBottom:16,scrollbarWidth:"none"}}>
+        {filters.map(f=>(
+          <button key={f} onClick={()=>setExpFilter(f)}
+            style={{background:expFilter===f?"#6c8ef5":"#1c1f30",color:expFilter===f?"#fff":"#8890a8",border:"none",borderRadius:20,padding:"7px 16px",fontSize:13,fontWeight:500,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,transition:"all 0.15s"}}>
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {/* Running total */}
+      {filtered.length>0&&(
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#1c1f30",borderRadius:10,marginBottom:14,fontSize:13}}>
+          <span style={{color:"#8890a8"}}>{filtered.length} expense{filtered.length!==1?"s":""}</span>
+          <span style={{fontWeight:700,color:"#e85a5a"}}>-{fmt(filteredTotal)}</span>
+        </div>
+      )}
+
+      {filtered.length===0?(
+        <div style={{textAlign:"center",padding:"48px 0",color:"#555a72"}}>
+          <div style={{fontSize:36,marginBottom:12}}>📋</div>
+          <div style={{fontSize:14}}>{state.expenses.length===0?"No expenses yet. Tap + to log one.":"No expenses match this filter."}</div>
+        </div>
+      ):(
+        <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,overflow:"hidden"}}>
+          {filtered.map((e,i)=>(
+            <ExpRow key={e.id} e={e} last={i===filtered.length-1}
+              onTogglePaid={()=>{
+                upd(p=>({expenses:p.expenses.map(ex=>ex.id===e.id?{...ex,paid:!ex.paid}:ex)}));
+                showToast(e.paid?"Marked unpaid":"Marked as paid ✓");
+              }}
+              onEdit={()=>setModal({type:"expense",data:e})}
+              onDelete={()=>{ upd(p=>({expenses:p.expenses.filter(ex=>ex.id!==e.id)})); showToast("Removed"); }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── INCOME VIEW ──────────────────────────────────────────────
+function IncomeView({ state, upd, calc, setModal, showToast }) {
+  return (
+    <div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:28,marginBottom:20}}>Income</div>
+
+      {/* Salary card */}
+      <div style={{background:"linear-gradient(135deg,#0e1c0e,#0d1a0d)",border:"1px solid #1e3a1e",borderRadius:16,padding:18,marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:600,color:"#5af5a6",letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Monthly Salary</div>
+        <div style={{fontFamily:"Instrument Serif,serif",fontSize:36,color:"#5af5a6",marginBottom:4}}>{fmt(calc.salary)}</div>
+        <div style={{fontSize:12,color:"#8890a8"}}>Paid on the 25th each month</div>
+        <button onClick={()=>setModal({type:"income",data:{id:"salary",label:"Monthly Salary",amount:state.salaryAmount,isSalary:true}})}
+          style={{marginTop:12,background:"#1e3a1e",border:"1px solid #2a5a2a",color:"#5af5a6",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}}>
+          Edit salary
+        </button>
+      </div>
+
+      {/* Additional income */}
+      {state.income.length>0&&(
+        <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,overflow:"hidden",marginBottom:12}}>
+          {state.income.map((inc,i)=>(
+            <div key={inc.id} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderBottom:i<state.income.length-1?"1px solid #1c1f30":"none"}}>
+              <span style={{fontSize:20}}>💰</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:500}}>{inc.label}</div>
+                <div style={{fontSize:12,color:"#8890a8"}}>One-off · {inc.date||"no date"}</div>
+              </div>
+              <span style={{fontWeight:700,color:"#5af5a6",fontSize:15}}>{fmt(inc.amount)}</span>
+              <button onClick={()=>setModal({type:"income",data:inc})} style={{background:"#1c1f30",border:"none",color:"#8890a8",borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer"}}>Edit</button>
+              <button onClick={()=>{ upd(p=>({income:p.income.filter(i=>i.id!==inc.id)})); showToast("Removed"); }}
+                style={{background:"none",border:"none",color:"#555a72",cursor:"pointer",padding:4}}>
+                <Icon name="x" size={14} color="#e85a5a"/>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{background:"#0d0f19",border:"1px solid #1c1f30",borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:8}}>
+        <span style={{color:"#8890a8"}}>Total this month</span>
+        <span style={{fontWeight:700,color:"#5af5a6"}}>{fmt(calc.totalIncome)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── SETTINGS ─────────────────────────────────────────────────
+function Settings({ state, upd, showToast }) {
+  return (
+    <div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:28,marginBottom:20}}>Settings</div>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <SettingCard title="Current account balance">
+          <p style={{fontSize:12,color:"#8890a8",marginBottom:10}}>What's in your account right now — updated at the start of each pay period.</p>
+          <input type="number" step="0.01" value={state.openingBalance}
+            onChange={e=>upd(()=>({openingBalance:parseFloat(e.target.value)||0}))}/>
+        </SettingCard>
+        <SettingCard title="Monthly salary (£)">
+          <input type="number" step="0.01" value={state.salaryAmount||""}
+            onChange={e=>upd(()=>({salaryAmount:parseFloat(e.target.value)||0}))}/>
+        </SettingCard>
+        <SettingCard title="Next pay date">
+          <input type="date" value={state.nextPayDate||""}
+            onChange={e=>upd(()=>({nextPayDate:e.target.value}))}/>
+        </SettingCard>
+        <div style={{background:"#1a0a0a",border:"1px solid #3a1212",borderRadius:16,padding:18}}>
+          <div style={{fontWeight:600,color:"#e85a5a",marginBottom:6}}>Danger zone</div>
+          <p style={{fontSize:13,color:"#8890a8",marginBottom:14}}>Reset all data including expenses, income and settings.</p>
+          <button onClick={()=>{ if(window.confirm("Reset everything? This cannot be undone.")) { setState({...defaultState}); showToast("Reset","err"); } }}
+            style={{background:"#3a1212",border:"1px solid #e85a5a44",color:"#e85a5a",borderRadius:8,padding:"10px 18px",fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}}>
+            Reset all data
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── EXPENSE ROW ──────────────────────────────────────────────
+function ExpRow({ e, compact, last, onTogglePaid, onEdit, onDelete }) {
+  if (compact) return (
+    <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #1c1f30"}}>
+      <span style={{fontSize:18}}>{CAT_ICON[e.category]||"📦"}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:500,color:e.paid?"#555a72":"#dde1f0",textDecoration:e.paid?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.company}</div>
+        <div style={{fontSize:11,color:"#555a72"}}>{e.category}</div>
+      </div>
+      <span style={{fontSize:13,fontWeight:600,color:e.paid?"#555a72":"#e85a5a",flexShrink:0}}>-{fmt(e.amount)}</span>
+    </div>
+  );
+
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderBottom:last?"none":"1px solid #1c1f30"}}>
+      {/* Paid toggle */}
+      <div onClick={onTogglePaid}
+        style={{width:22,height:22,borderRadius:6,border:`2px solid ${e.paid?"#5af5a6":"#2a2e45"}`,background:e.paid?"#5af5a6":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,transition:"all 0.15s"}}>
+        {e.paid&&<Icon name="check" size={12} color="#0a0c13"/>}
+      </div>
+      <span style={{fontSize:18,flexShrink:0}}>{CAT_ICON[e.category]||"📦"}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:14,fontWeight:500,color:e.paid?"#555a72":"#dde1f0",textDecoration:e.paid?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.company}</div>
+        <div style={{fontSize:11,color:"#555a72"}}>
+          {e.category} · {new Date(e.date).toLocaleDateString("en-GB")}
+          {e.notes&&<span> · {e.notes}</span>}
+        </div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+        <span style={{fontSize:13,fontWeight:700,color:e.paid?"#555a72":"#e85a5a"}}>-{fmt(e.amount)}</span>
+        <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:10,background:e.recurring?"#6c8ef522":"#f5a66c22",color:e.recurring?"#6c8ef5":"#f5a66c"}}>{e.recurring?"Recurring":"One-off"}</span>
+      </div>
+      <div style={{display:"flex",gap:6,flexShrink:0}}>
+        <button onClick={onEdit} style={{background:"#1c1f30",border:"none",borderRadius:6,padding:"6px 8px",cursor:"pointer",display:"flex",alignItems:"center"}}>
+          <Icon name="edit" size={13} color="#8890a8"/>
+        </button>
+        <button onClick={onDelete} style={{background:"#2a1010",border:"none",borderRadius:6,padding:"6px 8px",cursor:"pointer",display:"flex",alignItems:"center"}}>
+          <Icon name="trash" size={13} color="#e85a5a"/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── STAT CARD ────────────────────────────────────────────────
+function StatCard({ label, value, color, sub }) {
+  return (
+    <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:14,padding:"16px"}}>
+      <div style={{fontSize:11,fontWeight:600,color:"#8890a8",letterSpacing:0.8,textTransform:"uppercase",marginBottom:6,lineHeight:1.3}}>{label}</div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:26,color,lineHeight:1,marginBottom:sub?4:0}}>{value<0?`-${fmt(value)}`:fmt(value)}</div>
+      {sub&&<div style={{fontSize:11,color:"#8890a8",marginTop:4}}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── FIELD / SETTINGS CARD ────────────────────────────────────
+function Field({ label, icon, children }) {
+  return (
+    <div>
+      <label style={{display:"block",fontSize:13,fontWeight:500,color:"#8890a8",marginBottom:8}}>{icon} {label}</label>
+      {children}
+    </div>
+  );
+}
+
+function SettingCard({ title, children }) {
+  return (
+    <div style={{background:"#13162280",border:"1px solid #1c1f30",borderRadius:16,padding:18}}>
+      <div style={{fontWeight:600,fontSize:14,marginBottom:12,color:"#dde1f0"}}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// ─── EXPENSE MODAL ────────────────────────────────────────────
+function ExpenseModal({ expense, onSave, onClose }) {
+  const [form, setForm] = useState(expense||{company:"",category:"Housing",amount:"",date:today(),recurring:false,paid:false,notes:""});
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  return (
+    <Modal title={expense?"Edit Expense":"Log Expense"} onClose={onClose}>
+      <Field label="Company / Description" icon="🏷️">
+        <input value={form.company} onChange={e=>set("company",e.target.value)} placeholder="e.g. Tesco, Netflix, Council Tax" autoFocus/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Amount (£)" icon="💷">
+          <input type="number" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
+        </Field>
+        <Field label="Date" icon="📅">
+          <input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+        </Field>
+      </div>
+      <Field label="Category" icon="🏷️">
+        <select value={form.category} onChange={e=>set("category",e.target.value)}>
+          {CATEGORIES.map(c=><option key={c} value={c}>{CAT_ICON[c]} {c}</option>)}
+        </select>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Type" icon="🔁">
+          <select value={form.recurring?"recurring":"oneoff"} onChange={e=>set("recurring",e.target.value==="recurring")}>
+            <option value="oneoff">One-off</option>
+            <option value="recurring">Recurring</option>
+          </select>
+        </Field>
+        <Field label="Status" icon="✅">
+          <select value={form.paid?"paid":"unpaid"} onChange={e=>set("paid",e.target.value==="paid")}>
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Already paid</option>
+          </select>
+        </Field>
+      </div>
+      <Field label="Notes (optional)" icon="📝">
+        <input value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Any extra detail…"/>
+      </Field>
+      <ModalButtons onSave={()=>{ if(!form.company||!form.amount) return; onSave(form); }} onClose={onClose} label={expense?"Save changes":"Log expense"}/>
+    </Modal>
+  );
+}
+
+// ─── INCOME MODAL ─────────────────────────────────────────────
+function IncomeModal({ income, onSave, onClose }) {
+  const isSalary = income?.isSalary;
+  const [form, setForm] = useState(income||{label:"",amount:"",date:today()});
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const handleSave = () => {
+    if(!form.amount) return;
+    if(isSalary) {
+      // Salary edit — just updates salaryAmount on state directly
+      onSave({...form, isSalary:true});
+    } else {
+      if(!form.label) return;
+      onSave(form);
+    }
+  };
+
+  return (
+    <Modal title={isSalary?"Edit Salary":income?"Edit Income":"Add Income"} onClose={onClose}>
+      {!isSalary&&(
+        <Field label="Label" icon="🏷️">
+          <input value={form.label} onChange={e=>set("label",e.target.value)} placeholder="e.g. Freelance, Bonus" autoFocus/>
+        </Field>
+      )}
+      <Field label={isSalary?"Monthly salary (£)":"Amount (£)"} icon="💷">
+        <input type="number" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00" autoFocus={isSalary}/>
+      </Field>
+      {!isSalary&&(
+        <Field label="Date received" icon="📅">
+          <input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+        </Field>
+      )}
+      <ModalButtons onSave={handleSave} onClose={onClose} label={income?"Save changes":"Add income"}/>
+    </Modal>
+  );
+}
+
+// ─── MODAL WRAPPER ────────────────────────────────────────────
+function Modal({ title, children, onClose }) {
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 env(safe-area-inset-bottom)"}}
+      onClick={onClose}>
+      <div style={{background:"#13151f",border:"1px solid #1c1f30",borderRadius:"20px 20px 0 0",padding:"28px 20px 24px",width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto"}}
+        onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:22}}>{title}</div>
+          <button onClick={onClose} style={{background:"#1c1f30",border:"none",borderRadius:8,padding:"6px 8px",cursor:"pointer",display:"flex",alignItems:"center"}}>
+            <Icon name="x" size={16} color="#8890a8"/>
+          </button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ModalButtons({ onSave, onClose, label }) {
+  return (
+    <div style={{display:"flex",gap:10,marginTop:6}}>
+      <button onClick={onSave} style={{flex:1,background:"#6c8ef5",color:"#fff",border:"none",borderRadius:10,padding:"13px",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+      <button onClick={onClose} style={{background:"#1c1f30",color:"#8890a8",border:"none",borderRadius:10,padding:"13px 18px",fontSize:15,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+    </div>
+  );
+}
+
+// ─── GLOBAL STYLES ────────────────────────────────────────────
+function GlobalStyles() {
+  return (
+    <style>{`
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2a2e45; border-radius: 2px; }
+      input, select {
+        background: #1c1f30 !important; color: #dde1f0 !important;
+        border: 1px solid #2a2e45 !important; border-radius: 10px !important;
+        padding: 11px 14px !important; font-family: 'DM Sans', sans-serif !important;
+        font-size: 15px !important; width: 100% !important; outline: none !important;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        -webkit-appearance: none; appearance: none;
+      }
+      input:focus, select:focus {
+        border-color: #6c8ef5 !important;
+        box-shadow: 0 0 0 3px rgba(108,142,245,0.15) !important;
+      }
+      select option { background: #1c1f30; }
+      .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 8px; transition: background 0.15s; }
+      .icon-btn:hover { background: #1c1f30; }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+      }
+    `}</style>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
+</script>
+</body>
+</html>
