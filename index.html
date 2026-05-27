@@ -142,13 +142,13 @@ function BudgetPlanner() {
     const totalExp = monthExp.reduce((s,e) => s+Number(e.amount), 0);
     const paidAmt = state.expenses.filter(e=>e.paid).reduce((s,e)=>s+Number(e.amount),0);
 
-    // Opening balance = what's in account RIGHT NOW (user sets this)
-    // Live balance = opening - paid out so far this period
-    const liveBalance = Number(state.openingBalance) - paidAmt;
+    // Current balance = exactly what the user sets — never modified by the app
+    const liveBalance = Number(state.openingBalance);
 
-    // Forecast: from opening, subtract ALL expected expenses, add additional income
-    // (salary is already expected to land on pay date — included in nextMonthOpening)
-    const forecastEnd = Number(state.openingBalance) + additionalIncome - totalExp;
+    // Forecast: current balance minus all UNPAID expenses, plus additional income
+    // (paid expenses are already reflected in the current balance the user sets)
+    const unpaidExp = monthExp.filter(e=>!e.paid).reduce((s,e)=>s+Number(e.amount),0);
+    const forecastEnd = Number(state.openingBalance) + additionalIncome - unpaidExp;
 
     // Next month opening = end forecast + salary landing
     const nextOpening = forecastEnd + salary;
@@ -409,7 +409,7 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
         )}
 
         <div style={{fontSize:13,color:"#8890a8"}}>
-          Opening {fmt(state.openingBalance)} · {calc.paidAmt>0?`${fmt(calc.paidAmt)} paid out`:"nothing paid yet"}
+          {calc.paidAmt>0?`${fmt(calc.paidAmt)} already paid · not deducted from balance`:""}
         </div>
         {calc.dailyBudget !== null && (
           <div style={{marginTop:14,background:"#0d0f19",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -460,7 +460,7 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
           {label:"➕ Additional income",val:calc.additionalIncome,color:"#5af5a6"},
           {label:"🔁 Recurring costs",val:calc.recurringTotal,color:"#e85a5a"},
           {label:"1️⃣ One-off costs",val:calc.oneOffTotal,color:"#f5a66c"},
-          {label:"✅ Paid so far",val:calc.paidAmt,color:"#8890a8"},
+          {label:"✅ Already paid",val:calc.paidAmt,color:"#555a72"},
         ].map((r,i)=>(
           <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:i<4?"1px solid #1c1f30":"none",fontSize:14}}>
             <span style={{color:"#a0a8c0"}}>{r.label}</span>
