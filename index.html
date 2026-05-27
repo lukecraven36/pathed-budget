@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="theme-color" content="#0a0c13"/>
@@ -13,6 +13,10 @@
 <style>
   html, body { margin: 0; padding: 0; background: #0a0c13; min-height: 100%; }
   #root { min-height: 100vh; }
+
+  input, textarea, select {
+    font-size: 16px !important;
+  }
 </style>
 </head>
 <body>
@@ -406,7 +410,7 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
                   onChange={e=>setBalanceDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
                   autoFocus
-                  style={{paddingLeft:"32px !important",fontSize:"28px !important",fontFamily:"Instrument Serif,serif !important",color:"#5af5a6 !important",height:56}}
+                  style={{paddingLeft:"38px",fontSize:"28px",fontFamily:"Instrument Serif,serif",color:"#5af5a6",height:56}}
                 />
               </div>
               <button onClick={saveBalance}
