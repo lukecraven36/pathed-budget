@@ -145,13 +145,13 @@ function BudgetPlanner() {
     // Current balance = exactly what the user sets — never modified by the app
     const liveBalance = Number(state.openingBalance);
 
-    // Forecast: current balance minus all UNPAID expenses, plus additional income
-    // (paid expenses are already reflected in the current balance the user sets)
+    // Forecast: current balance minus all UNPAID expenses only
+    // Income (salary + additional) is NOT included — it lands separately
     const unpaidExp = monthExp.filter(e=>!e.paid).reduce((s,e)=>s+Number(e.amount),0);
-    const forecastEnd = Number(state.openingBalance) + additionalIncome - unpaidExp;
+    const forecastEnd = Number(state.openingBalance) - unpaidExp;
 
-    // Next month opening = end forecast + salary landing
-    const nextOpening = forecastEnd + salary;
+    // Next month opening = forecast + salary + any additional income
+    const nextOpening = forecastEnd + salary + additionalIncome;
 
     // Due before payday
     const payDate = state.nextPayDate ? new Date(state.nextPayDate) : null;
