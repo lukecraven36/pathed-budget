@@ -145,13 +145,30 @@ function BudgetPlanner() {
     // Current balance = exactly what the user sets — never modified by the app
     const liveBalance = Number(state.openingBalance);
 
-    // Forecast: current balance minus all UNPAID expenses only
-    // Income (salary + additional) is NOT included — it lands separately
-    const unpaidExp = monthExp.filter(e=>!e.paid).reduce((s,e)=>s+Number(e.amount),0);
-    const forecastEnd = Number(state.openingBalance) - unpaidExp;
+    // Forecast = current balance
+    //   - unpaid expenses dated on or before next pay date
+    //   + additional income dated on or before next pay date
+    // Everything with a date after pay date is excluded — it's next period's problem
+    const beforePayday = (dateStr) => {
+      if (!payDate) return true; // no pay date set — include everything
+      return new Date(dateStr) <= payDate;
+    };
 
-    // Next month opening = forecast + salary + any additional income
-    const nextOpening = forecastEnd + salary + additionalIncome;
+    const unpaidExpBeforePayday = state.expenses
+      .filter(e => !e.paid && beforePayday(e.date || today()))
+      .reduce((s, e) => s + Number(e.amount), 0);
+
+    const incomeBeforePayday = state.income
+      .filter(i => beforePayday(i.date || today()))
+      .reduce((s, i) => s + Number(i.amount), 0);
+
+    const forecastEnd = Number(state.openingBalance) - unpaidExpBeforePayday + incomeBeforePayday;
+
+    // Next month opening = forecast + salary landing on pay date
+    const nextOpening = forecastEnd + salary;
+
+    // Also keep unpaidExp for the month summary display
+    const unpaidExp = monthExp.filter(e=>!e.paid).reduce((s,e)=>s+Number(e.amount),0);
 
     // Due before payday
     const payDate = state.nextPayDate ? new Date(state.nextPayDate) : null;
