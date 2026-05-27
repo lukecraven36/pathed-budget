@@ -401,8 +401,8 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
           <div style={{marginBottom:10}}>
             <div style={{fontSize:12,color:"#8890a8",marginBottom:8}}>Enter your current account balance:</div>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              <div style={{position:"relative",flex:1}}>
-                <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:"#8890a8",fontSize:20,fontFamily:"Instrument Serif,serif",pointerEvents:"none"}}>£</span>
+              <div style={{display:"flex",alignItems:"center",flex:1,background:"#1c1f30",border:"1px solid #2a2e45",borderRadius:8,height:56,paddingLeft:14}}>
+                <span style={{color:"#8890a8",fontSize:24,fontFamily:"Instrument Serif,serif",lineHeight:1,flexShrink:0,marginRight:4}}>£</span>
                 <input
                   type="number"
                   step="0.01"
@@ -410,7 +410,7 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
                   onChange={e=>setBalanceDraft(e.target.value)}
                   onKeyDown={handleKeyDown}
                   autoFocus
-                  style={{paddingLeft:"38px",fontSize:"28px",fontFamily:"Instrument Serif,serif",color:"#5af5a6",height:56}}
+                  style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:"28px",fontFamily:"Instrument Serif,serif",color:"#5af5a6",height:"100%",padding:0,width:"100%"}}
                 />
               </div>
               <button onClick={saveBalance}
