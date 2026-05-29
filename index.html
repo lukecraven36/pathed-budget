@@ -59,6 +59,7 @@ const defaultState = {
   salarySetup: false,
   salaryOverride: null,       // one-off override amount
   salaryOverrideMonth: null,  // "YYYY-MM" string — auto-clears when month changes
+  lastResetDate: null,        // ISO date string of last auto-reset
   income: [],
   expenses: [],
 };
@@ -113,6 +114,55 @@ function BudgetPlanner() {
     if (!loaded || !state) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
   }, [state, loaded]);
+
+  // ─── AUTO-RESET ON PAYDAY ──────────────────────────────────
+  // When today is on or after the next pay date, and we haven't already reset
+  // for this pay cycle, automatically:
+  //   1. Reset all expenses to unpaid
+  //   2. Advance nextPayDate by one month
+  //   3. Clear one-off income entries (keep recurring ones)
+  //   4. Record the reset date so we don't reset again this cycle
+  useEffect(() => {
+    if (!loaded || !state || !state.nextPayDate) return;
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const payDate = new Date(state.nextPayDate);
+    payDate.setHours(0,0,0,0);
+    if (today < payDate) return; // not payday yet
+
+    // Check if we already reset for this pay cycle
+    if (state.lastResetDate) {
+      const lastReset = new Date(state.lastResetDate);
+      lastReset.setHours(0,0,0,0);
+      if (lastReset >= payDate) return; // already reset this cycle
+    }
+
+    // Advance pay date by one month (keep same day of month)
+    const nextPay = new Date(payDate);
+    nextPay.setMonth(nextPay.getMonth() + 1);
+    const nextPayStr = nextPay.toISOString().split("T")[0];
+
+    // Reset all expenses to unpaid, advance their dates by one month too
+    const resetExpenses = state.expenses.map(e => {
+      const newDate = new Date(e.date || state.nextPayDate);
+      newDate.setMonth(newDate.getMonth() + 1);
+      return { ...e, paid: false, date: newDate.toISOString().split("T")[0] };
+    });
+
+    // Keep only recurring income (remove one-off entries that have passed)
+    const resetIncome = state.income.filter(i => i.recurring);
+
+    upd(() => ({
+      expenses: resetExpenses,
+      income: resetIncome,
+      nextPayDate: nextPayStr,
+      lastResetDate: today.toISOString().split("T")[0],
+      salaryOverride: null,
+      salaryOverrideMonth: null,
+    }));
+
+    showToast("New pay period started — expenses reset ✓");
+  }, [loaded, state?.nextPayDate]);
 
   const showToast = (msg, type="ok") => {
     clearTimeout(toastTimer.current);
@@ -863,7 +913,7 @@ function ExpenseModal({ expense, onSave, onClose }) {
 // ─── INCOME MODAL ─────────────────────────────────────────────
 function IncomeModal({ income, onSave, onClose }) {
   const isSalary = income?.isSalary;
-  const [form, setForm] = useState(income||{label:"",amount:"",date:today()});
+  const [form, setForm] = useState(income||{label:"",amount:"",date:today(),recurring:true});
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const handleSave = () => {
@@ -890,6 +940,14 @@ function IncomeModal({ income, onSave, onClose }) {
       {!isSalary&&(
         <Field label="Date received" icon="📅">
           <input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+        </Field>
+      )}
+      {!isSalary&&(
+        <Field label="Type" icon="🔁">
+          <select value={form.recurring?"recurring":"oneoff"} onChange={e=>set("recurring",e.target.value==="recurring")}>
+            <option value="recurring">Recurring (resets each pay period)</option>
+            <option value="oneoff">One-off (removed after reset)</option>
+          </select>
         </Field>
       )}
       <ModalButtons onSave={handleSave} onClose={onClose} label={income?"Save changes":"Add income"}/>
