@@ -790,35 +790,41 @@ function Analytics({ state, calc }) {
       d.setDate(start.getDate() + i);
       const thisDOM = d.getDate();
 
+      const events = []; // money movements on this exact day
       if (i > 0) {
         // Expenses due this day (recurring = match day-of-month; one-off = match exact date)
         state.expenses.forEach(e => {
           const amt = Number(e.amount) || 0;
+          let hit = false;
           if (e.recurring) {
-            if (dom(e.date) === thisDOM) balance -= amt;
+            if (dom(e.date) === thisDOM) hit = true;
           } else {
             const ed = new Date(e.date); ed.setHours(0,0,0,0);
-            if (ed.getTime() === d.getTime() && !e.paid) balance -= amt;
+            if (ed.getTime() === d.getTime() && !e.paid) hit = true;
           }
+          if (hit) { balance -= amt; events.push({ kind:"expense", label:e.company||e.category||"Expense", amount:-amt, recurring:e.recurring }); }
         });
         // Additional income
         state.income.forEach(inc => {
           const amt = Number(inc.amount) || 0;
+          let hit = false;
           if (inc.recurring) {
-            if (dom(inc.date) === thisDOM) balance += amt;
+            if (dom(inc.date) === thisDOM) hit = true;
           } else {
             const id = new Date(inc.date); id.setHours(0,0,0,0);
-            if (id.getTime() === d.getTime()) balance += amt;
+            if (id.getTime() === d.getTime()) hit = true;
           }
+          if (hit) { balance += amt; events.push({ kind:"income", label:inc.label||"Income", amount:amt, recurring:inc.recurring }); }
         });
         // Salary
-        if (payDay && thisDOM === payDay && salaryAmt > 0) balance += salaryAmt;
+        if (payDay && thisDOM === payDay && salaryAmt > 0) { balance += salaryAmt; events.push({ kind:"salary", label:"Salary", amount:salaryAmt, recurring:true }); }
       }
 
       points.push({
         date: new Date(d),
         balance: Math.round(balance * 100) / 100,
         label: d.toLocaleDateString("en-GB",{day:"numeric",month:"short"}),
+        events,
       });
     }
     return points;
@@ -857,6 +863,7 @@ function Analytics({ state, calc }) {
   const areaPath = linePath + ` L${xFor(projection.length-1).toFixed(1)},${(padTop+chartH).toFixed(1)} L${xFor(0).toFixed(1)},${(padTop+chartH).toFixed(1)} Z`;
 
   const scrollRef = React.useRef(null);
+  const [selectedDay, setSelectedDay] = React.useState(null);
 
   return (
     <div>
@@ -944,19 +951,69 @@ function Analytics({ state, calc }) {
           <path d={areaPath} fill="url(#areaGrad)"/>
           <path d={linePath} fill="none" stroke="#6c8ef5" strokeWidth="2" strokeLinejoin="round"/>
 
-          {/* Points coloured by zone, every 5 days + key events */}
+          {/* Date labels every 10 days */}
           {projection.map((p,i) => {
-            const isKey = i===0 || i===projection.length-1 || p.date.getTime()===lowest.date.getTime() || i%10===0;
-            if (!isKey) return null;
+            if (i!==0 && i!==projection.length-1 && i%10!==0) return null;
             return (
-              <g key={i}>
-                <circle cx={xFor(i)} cy={yFor(p.balance)} r="3.5" fill={zoneColor(p.balance)} stroke="#0d0f19" strokeWidth="1.5"/>
-                <text x={xFor(i)} y={H-10} fontSize="9" fill="#8890a8" textAnchor="middle">{p.date.getDate()}/{p.date.getMonth()+1}</text>
+              <text key={"lbl"+i} x={xFor(i)} y={H-10} fontSize="9" fill="#8890a8" textAnchor="middle">{p.date.getDate()}/{p.date.getMonth()+1}</text>
+            );
+          })}
+
+          {/* Event markers - any day where money moves, tappable */}
+          {projection.map((p,i) => {
+            if (!p.events || p.events.length===0) return null;
+            const hasIncome = p.events.some(e=>e.amount>0);
+            const hasExpense = p.events.some(e=>e.amount<0);
+            // marker colour: green if net income, red/orange shades for expense, based on resulting balance zone
+            const markerFill = hasIncome && !hasExpense ? "#5af5a6" : zoneColor(p.balance);
+            const isSel = selectedDay===i;
+            return (
+              <g key={"ev"+i} onClick={()=>setSelectedDay(isSel?null:i)} style={{cursor:"pointer"}}>
+                {/* larger invisible tap target */}
+                <circle cx={xFor(i)} cy={yFor(p.balance)} r="14" fill="transparent"/>
+                {/* visible marker */}
+                <circle cx={xFor(i)} cy={yFor(p.balance)} r={isSel?6:4.5} fill={markerFill} stroke={isSel?"#fff":"#0d0f19"} strokeWidth={isSel?2:1.5}/>
+                {/* tiny up/down indicator */}
+                {hasIncome && <path d={`M${xFor(i)-2.5},${yFor(p.balance)+1.2} L${xFor(i)},${yFor(p.balance)-1.8} L${xFor(i)+2.5},${yFor(p.balance)+1.2}`} stroke="#0d0f19" strokeWidth="1.2" fill="none"/>}
               </g>
             );
           })}
+
+          {/* Highlight line for selected day */}
+          {selectedDay!==null && (
+            <line x1={xFor(selectedDay)} y1={padTop} x2={xFor(selectedDay)} y2={padTop+chartH} stroke="#6c8ef5" strokeOpacity="0.4" strokeWidth="1" strokeDasharray="2,2"/>
+          )}
         </svg>
       </div>
+
+      {/* Selected day popup */}
+      {selectedDay!==null && projection[selectedDay] && (
+        <div style={{background:"#13151f",border:"1px solid #2a2e45",borderRadius:12,padding:16,marginTop:12,position:"relative"}}>
+          <button onClick={()=>setSelectedDay(null)} style={{position:"absolute",top:12,right:12,background:"#1c1f30",border:"none",borderRadius:8,padding:"5px 7px",cursor:"pointer",display:"flex",alignItems:"center"}}>
+            <Icon name="x" size={14} color="#8890a8"/>
+          </button>
+          <div style={{fontSize:11,color:"#8890a8",textTransform:"uppercase",letterSpacing:0.5,fontWeight:600,marginBottom:4}}>{projection[selectedDay].date.toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:22,color:zoneColor(projection[selectedDay].balance),marginBottom:12}}>{fmtFull(projection[selectedDay].balance)}</div>
+          {projection[selectedDay].events.length===0 ? (
+            <div style={{fontSize:13,color:"#8890a8"}}>No money movements this day.</div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {projection[selectedDay].events.map((ev,j)=>(
+                <div key={j} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:8,borderBottom:j<projection[selectedDay].events.length-1?"1px solid #1c1f30":"none"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:16}}>{ev.kind==="income"?"💷":ev.kind==="salary"?"💰":"💳"}</span>
+                    <div>
+                      <div style={{fontSize:14,color:"#e8ecf5"}}>{ev.label}</div>
+                      <div style={{fontSize:10,color:"#8890a8"}}>{ev.recurring?"Recurring":"One-off"}</div>
+                    </div>
+                  </div>
+                  <div style={{fontFamily:"Instrument Serif,serif",fontSize:17,color:ev.amount>0?"#5af5a6":"#e85a5a"}}>{ev.amount>0?"+":"−"}{fmtFull(Math.abs(ev.amount))}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{fontSize:11,color:"#555a72",textAlign:"center",marginTop:8}}>← scroll to see all 60 days →</div>
 
       {/* Upcoming events list */}
@@ -1242,4 +1299,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
 </script>
 </body>
 </html>
+
 
