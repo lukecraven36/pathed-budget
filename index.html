@@ -499,10 +499,10 @@ function Setup({ onDone, accountName }) {
 
         <div style={{display:"flex",flexDirection:"column",gap:20}}>
           <Field label="What's in this account right now? (£)" icon="💳">
-            <input type="number" step="0.01" placeholder="e.g. 842.50" value={balance} onChange={e=>setBalance(e.target.value)}/>
+            <input type="number" inputMode="decimal" step="0.01" placeholder="e.g. 842.50" value={balance} onChange={e=>setBalance(e.target.value)}/>
           </Field>
           <Field label={isJoint?"Monthly top-up / income (£) — optional":"Monthly salary (£)"} icon="💰">
-            <input type="number" step="0.01" placeholder={isJoint?"e.g. 1500.00":"e.g. 2800.00"} value={salary} onChange={e=>setSalary(e.target.value)}/>
+            <input type="number" inputMode="decimal" step="0.01" placeholder={isJoint?"e.g. 1500.00":"e.g. 2800.00"} value={salary} onChange={e=>setSalary(e.target.value)}/>
           </Field>
           <Field label={isJoint?"Next top-up / pay date":"Next pay date"} icon="📅">
             <input type="date" value={payDate} onChange={e=>setPayDate(e.target.value)}/>
@@ -570,7 +570,7 @@ function Dashboard({ state, calc, setModal, setView, upd, showToast }) {
               <div style={{display:"flex",alignItems:"center",flex:1,background:"#1c1f30",border:"1px solid #2a2e45",borderRadius:8,height:56,paddingLeft:14}}>
                 <span style={{color:"#8890a8",fontSize:24,fontFamily:"Instrument Serif,serif",lineHeight:1,flexShrink:0,marginRight:4}}>£</span>
                 <input
-                  type="number"
+                  type="number" inputMode="decimal"
                   step="0.01"
                   value={balanceDraft}
                   onChange={e=>setBalanceDraft(e.target.value)}
@@ -843,7 +843,7 @@ function IncomeView({ state, upd, calc, setModal, showToast }) {
                 <div style={{marginTop:12}}>
                   <div style={{display:"flex",alignItems:"center",flex:1,background:"#1c1f30",border:"1px solid #2a2e45",borderRadius:8,height:48,paddingLeft:12,marginBottom:8}}>
                     <span style={{color:"#8890a8",fontSize:18,fontFamily:"Instrument Serif,serif",marginRight:4}}>£</span>
-                    <input type="number" step="0.01" placeholder={String(state.salaryAmount)}
+                    <input type="number" inputMode="decimal" step="0.01" placeholder={String(state.salaryAmount)}
                       value={draft} onChange={e=>setDraft(e.target.value)}
                       onKeyDown={e=>{ if(e.key==="Enter") saveMonthOverride(m.key); if(e.key==="Escape") setEditingMonth(null); }}
                       autoFocus
@@ -1194,11 +1194,11 @@ function Settings({ state, upd, showToast }) {
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
         <SettingCard title="Current account balance">
           <p style={{fontSize:12,color:"#8890a8",marginBottom:10}}>What's in your account right now — updated at the start of each pay period.</p>
-          <input type="number" step="0.01" value={state.openingBalance}
+          <input type="number" inputMode="decimal" step="0.01" value={state.openingBalance}
             onChange={e=>upd(()=>({openingBalance:parseFloat(e.target.value)||0}))}/>
         </SettingCard>
         <SettingCard title="Monthly salary (£)">
-          <input type="number" step="0.01" value={state.salaryAmount||""}
+          <input type="number" inputMode="decimal" step="0.01" value={state.salaryAmount||""}
             onChange={e=>upd(()=>({salaryAmount:parseFloat(e.target.value)||0}))}/>
         </SettingCard>
         <SettingCard title="Next pay date">
@@ -1304,7 +1304,7 @@ function ExpenseModal({ expense, onSave, onClose }) {
       </Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Amount (£)" icon="💷">
-          <input type="number" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
+          <input type="number" inputMode="decimal" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00"/>
         </Field>
         <Field label="Date" icon="📅">
           <input type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
@@ -1362,7 +1362,7 @@ function IncomeModal({ income, onSave, onClose }) {
         </Field>
       )}
       <Field label={isSalary?"Monthly salary (£)":"Amount (£)"} icon="💷">
-        <input type="number" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00" autoFocus={isSalary}/>
+        <input type="number" inputMode="decimal" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00" autoFocus={isSalary}/>
       </Field>
       {!isSalary&&(
         <Field label="Date received" icon="📅">
@@ -1446,6 +1446,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
 </script>
 </body>
 </html>
+
 
 
 
