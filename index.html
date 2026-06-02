@@ -57,8 +57,9 @@ const defaultState = {
   salaryAmount: 0,
   nextPayDate: "",
   salarySetup: false,
-  salaryOverride: null,       // one-off override amount
-  salaryOverrideMonth: null,  // "YYYY-MM" string — auto-clears when month changes
+  salaryOverride: null,       // legacy single override (migrated on load)
+  salaryOverrideMonth: null,  // legacy
+  salaryOverrides: {},        // { "YYYY-MM": amount } — per-month overrides
   lastResetDate: null,        // ISO date string of last auto-reset
   income: [],
   expenses: [],
@@ -106,7 +107,16 @@ function BudgetPlanner() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      setState(saved ? JSON.parse(saved) : defaultState);
+      let loaded = saved ? JSON.parse(saved) : defaultState;
+      // Ensure salaryOverrides exists
+      if (!loaded.salaryOverrides) loaded.salaryOverrides = {};
+      // Migrate legacy single override into the map
+      if (loaded.salaryOverride !== null && loaded.salaryOverrideMonth) {
+        loaded.salaryOverrides[loaded.salaryOverrideMonth] = loaded.salaryOverride;
+        loaded.salaryOverride = null;
+        loaded.salaryOverrideMonth = null;
+      }
+      setState(loaded);
     } catch { setState(defaultState); }
     setLoaded(true);
   }, []);
@@ -153,13 +163,19 @@ function BudgetPlanner() {
     // Keep only recurring income (remove one-off entries that have passed)
     const resetIncome = state.income.filter(i => i.recurring);
 
+    // Prune salary overrides for months that have now passed
+    const prunedOverrides = {};
+    const thisMonthKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+    Object.entries(state.salaryOverrides || {}).forEach(([k,v]) => {
+      if (k >= thisMonthKey) prunedOverrides[k] = v; // keep current & future months
+    });
+
     upd(() => ({
       expenses: resetExpenses,
       income: resetIncome,
       nextPayDate: nextPayStr,
       lastResetDate: today.toISOString().split("T")[0],
-      salaryOverride: null,
-      salaryOverrideMonth: null,
+      salaryOverrides: prunedOverrides,
     }));
 
     showToast("New pay period started — expenses reset ✓");
@@ -182,10 +198,12 @@ function BudgetPlanner() {
     // Additional income (non-salary)
     const additionalIncome = state.income.reduce((s,i) => s + Number(i.amount), 0);
 
-    // Use override salary if set for this month, otherwise use the regular amount
+    // Salary for a given month: use override if present, else regular amount
     const currentMonthKey = `${cy}-${String(cm+1).padStart(2,'0')}`;
-    const salaryOverrideActive = state.salaryOverrideMonth === currentMonthKey && state.salaryOverride !== null;
-    const salary = salaryOverrideActive ? Number(state.salaryOverride) : Number(state.salaryAmount || 0);
+    const overrides = state.salaryOverrides || {};
+    const salaryForMonth = (key) => overrides[key] != null ? Number(overrides[key]) : Number(state.salaryAmount || 0);
+    const salaryOverrideActive = overrides[currentMonthKey] != null;
+    const salary = salaryForMonth(currentMonthKey);
 
     // This month expenses
     const monthExp = state.expenses.filter(e => {
@@ -643,94 +661,120 @@ function Expenses({ state, upd, calc, setModal, showToast, expFilter, setExpFilt
 
 // ─── INCOME VIEW ──────────────────────────────────────────────
 function IncomeView({ state, upd, calc, setModal, showToast }) {
-  const [editingOverride, setEditingOverride] = React.useState(false);
-  const [overrideDraft, setOverrideDraft] = React.useState("");
-
-  const saveOverride = () => {
-    const val = parseFloat(overrideDraft);
-    if (!isNaN(val) && val >= 0) {
-      upd(() => ({ salaryOverride: val, salaryOverrideMonth: calc.currentMonthKey }));
-      showToast("One-off salary set ✓");
+  // Build the next 3 months (from current month forward)
+  const months = React.useMemo(() => {
+    const arr = [];
+    const now = new Date();
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      arr.push({ key, label: d.toLocaleDateString("en-GB",{month:"long",year:"numeric"}) });
     }
-    setEditingOverride(false);
+    return arr;
+  }, []);
+
+  const overrides = state.salaryOverrides || {};
+  const [editingMonth, setEditingMonth] = React.useState(null);
+  const [draft, setDraft] = React.useState("");
+
+  const startEdit = (key) => {
+    setEditingMonth(key);
+    setDraft(overrides[key] != null ? String(overrides[key]) : "");
   };
 
-  const clearOverride = () => {
-    upd(() => ({ salaryOverride: null, salaryOverrideMonth: null }));
-    showToast("Override cleared — back to regular salary");
+  const saveMonthOverride = (key) => {
+    const val = parseFloat(draft);
+    if (!isNaN(val) && val >= 0) {
+      upd(p => ({ salaryOverrides: { ...(p.salaryOverrides||{}), [key]: val } }));
+      showToast("Salary override set ✓");
+    }
+    setEditingMonth(null);
   };
+
+  const clearMonthOverride = (key) => {
+    upd(p => {
+      const next = { ...(p.salaryOverrides||{}) };
+      delete next[key];
+      return { salaryOverrides: next };
+    });
+    showToast("Reverted to regular salary");
+    setEditingMonth(null);
+  };
+
+  const salaryForKey = (key) => overrides[key] != null ? Number(overrides[key]) : Number(state.salaryAmount||0);
 
   return (
     <div>
       <div style={{fontFamily:"Instrument Serif,serif",fontSize:28,marginBottom:20}}>Income</div>
 
-      {/* Salary card */}
-      <div style={{background:"linear-gradient(135deg,#0e1c0e,#0d1a0d)",border:`1px solid ${calc.salaryOverrideActive?"#f5a66c44":"#1e3a1e"}`,borderRadius:16,padding:18,marginBottom:12}}>
-        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,marginBottom:8}}>
-          <div>
-            <div style={{fontSize:11,fontWeight:600,color:"#5af5a6",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Monthly Salary</div>
-            <div style={{fontFamily:"Instrument Serif,serif",fontSize:36,color:calc.salaryOverrideActive?"#f5a66c":"#5af5a6",lineHeight:1,marginBottom:4}}>
-              {fmt(calc.salary)}
-              {calc.salaryOverrideActive && (
-                <span style={{fontSize:13,fontFamily:"DM Sans,sans-serif",color:"#f5a66c",fontWeight:500,marginLeft:10,verticalAlign:"middle"}}>
-                  this month only
-                </span>
+      {/* Regular salary card */}
+      <div style={{background:"linear-gradient(135deg,#0e1c0e,#0d1a0d)",border:"1px solid #1e3a1e",borderRadius:16,padding:18,marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:600,color:"#5af5a6",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Regular Monthly Salary</div>
+        <div style={{fontFamily:"Instrument Serif,serif",fontSize:36,color:"#5af5a6",lineHeight:1,marginBottom:4}}>{fmt(state.salaryAmount)}</div>
+        <div style={{fontSize:12,color:"#8890a8",marginBottom:12}}>Used for any month without an override</div>
+        <button onClick={()=>setModal({type:"income",data:{id:"salary",label:"Monthly Salary",amount:state.salaryAmount,isSalary:true}})}
+          style={{background:"#1e3a1e",border:"1px solid #2a5a2a",color:"#5af5a6",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}}>
+          Edit regular salary
+        </button>
+      </div>
+
+      {/* Next 3 months overrides */}
+      <div style={{fontSize:11,fontWeight:600,color:"#8890a8",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Next 3 Months</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+        {months.map(m => {
+          const isOverridden = overrides[m.key] != null;
+          const amt = salaryForKey(m.key);
+          const isEditing = editingMonth === m.key;
+          return (
+            <div key={m.key} style={{background:"#13151f",border:`1px solid ${isOverridden?"#f5a66c44":"#1c1f30"}`,borderRadius:12,padding:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+                <div>
+                  <div style={{fontSize:14,color:"#e8ecf5",fontWeight:500}}>{m.label}</div>
+                  <div style={{fontSize:11,color:isOverridden?"#f5a66c":"#8890a8",marginTop:2}}>
+                    {isOverridden?"⚡ Override":"Regular salary"}
+                  </div>
+                </div>
+                {!isEditing && (
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{fontFamily:"Instrument Serif,serif",fontSize:22,color:isOverridden?"#f5a66c":"#5af5a6"}}>{fmt(amt)}</div>
+                    <button onClick={()=>startEdit(m.key)}
+                      style={{background:"#1c1f30",border:"none",color:"#8890a8",borderRadius:6,padding:"6px 8px",cursor:"pointer",display:"flex",alignItems:"center"}}>
+                      <Icon name="edit" size={14} color="#8890a8"/>
+                    </button>
+                  </div>
+                )}
+              </div>
+              {isEditing && (
+                <div style={{marginTop:12}}>
+                  <div style={{display:"flex",alignItems:"center",flex:1,background:"#1c1f30",border:"1px solid #2a2e45",borderRadius:8,height:48,paddingLeft:12,marginBottom:8}}>
+                    <span style={{color:"#8890a8",fontSize:18,fontFamily:"Instrument Serif,serif",marginRight:4}}>£</span>
+                    <input type="number" step="0.01" placeholder={String(state.salaryAmount)}
+                      value={draft} onChange={e=>setDraft(e.target.value)}
+                      onKeyDown={e=>{ if(e.key==="Enter") saveMonthOverride(m.key); if(e.key==="Escape") setEditingMonth(null); }}
+                      autoFocus
+                      style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:"18px",fontFamily:"Instrument Serif,serif",color:"#f5a66c",height:"100%",padding:0,width:"100%"}}/>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>saveMonthOverride(m.key)}
+                      style={{flex:1,background:"#f5a66c",border:"none",borderRadius:8,height:42,fontSize:13,fontWeight:600,color:"#0a0c13",cursor:"pointer",fontFamily:"inherit"}}>
+                      Save override
+                    </button>
+                    {isOverridden && (
+                      <button onClick={()=>clearMonthOverride(m.key)}
+                        style={{background:"none",border:"1px solid #2a2e45",color:"#8890a8",borderRadius:8,padding:"0 14px",height:42,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                        Revert
+                      </button>
+                    )}
+                    <button onClick={()=>setEditingMonth(null)}
+                      style={{background:"#1c1f30",border:"none",borderRadius:8,padding:"0 12px",height:42,cursor:"pointer",display:"flex",alignItems:"center"}}>
+                      <Icon name="x" size={15} color="#8890a8"/>
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
-            {calc.salaryOverrideActive ? (
-              <div style={{fontSize:12,color:"#8890a8"}}>
-                Regular salary: {fmt(state.salaryAmount)} · overridden for {calc.currentMonthKey}
-              </div>
-            ) : (
-              <div style={{fontSize:12,color:"#8890a8"}}>Regular monthly amount</div>
-            )}
-          </div>
-        </div>
-
-        {/* Override banner */}
-        {calc.salaryOverrideActive && (
-          <div style={{background:"rgba(245,166,108,0.1)",border:"1px solid rgba(245,166,108,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-            <span style={{fontSize:12,color:"#f5a66c"}}>⚡ One-off override active this month</span>
-            <button onClick={clearOverride}
-              style={{background:"none",border:"1px solid rgba(245,166,108,0.4)",color:"#f5a66c",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
-              Clear override
-            </button>
-          </div>
-        )}
-
-        {/* Inline override input */}
-        {editingOverride ? (
-          <div>
-            <div style={{fontSize:12,color:"#8890a8",marginBottom:8}}>Enter this month's actual salary:</div>
-            <div style={{display:"flex",gap:10}}>
-              <input type="number" step="0.01" placeholder={fmt(state.salaryAmount)}
-                value={overrideDraft} onChange={e=>setOverrideDraft(e.target.value)}
-                onKeyDown={e=>{ if(e.key==="Enter") saveOverride(); if(e.key==="Escape") setEditingOverride(false); }}
-                autoFocus style={{flex:1}}/>
-              <button onClick={saveOverride}
-                style={{background:"#f5a66c",border:"none",borderRadius:10,padding:"0 18px",height:46,fontSize:14,fontWeight:600,color:"#0a0c13",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
-                Set
-              </button>
-              <button onClick={()=>setEditingOverride(false)}
-                style={{background:"#1c1f30",border:"none",borderRadius:10,padding:"0 12px",height:46,cursor:"pointer",display:"flex",alignItems:"center"}}>
-                <Icon name="x" size={15} color="#8890a8"/>
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div style={{display:"flex",gap:10,marginTop:12}}>
-            <button onClick={()=>setModal({type:"income",data:{id:"salary",label:"Monthly Salary",amount:state.salaryAmount,isSalary:true}})}
-              style={{background:"#1e3a1e",border:"1px solid #2a5a2a",color:"#5af5a6",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}}>
-              Edit regular salary
-            </button>
-            {!calc.salaryOverrideActive && (
-              <button onClick={()=>{ setOverrideDraft(""); setEditingOverride(true); }}
-                style={{background:"rgba(245,166,108,0.1)",border:"1px solid rgba(245,166,108,0.3)",color:"#f5a66c",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit"}}>
-                ⚡ Override this month
-              </button>
-            )}
-          </div>
-        )}
+          );
+        })}
       </div>
 
       {/* Additional income */}
@@ -780,9 +824,14 @@ function Analytics({ state, calc }) {
       return new Date(dateStr).getDate();
     };
 
-    // Salary: lands on nextPayDate, then monthly after
+    // Salary: lands on nextPayDate day-of-month, amount varies per month via overrides
     const payDay = state.nextPayDate ? new Date(state.nextPayDate).getDate() : null;
-    const salaryAmt = Number(state.salaryAmount) || 0;
+    const regularSalary = Number(state.salaryAmount) || 0;
+    const overrides = state.salaryOverrides || {};
+    const salaryForDay = (dateObj) => {
+      const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth()+1).padStart(2,'0')}`;
+      return overrides[key] != null ? Number(overrides[key]) : regularSalary;
+    };
 
     const points = [];
     for (let i = 0; i <= DAYS; i++) {
@@ -816,8 +865,11 @@ function Analytics({ state, calc }) {
           }
           if (hit) { balance += amt; events.push({ kind:"income", label:inc.label||"Income", amount:amt, recurring:inc.recurring }); }
         });
-        // Salary
-        if (payDay && thisDOM === payDay && salaryAmt > 0) { balance += salaryAmt; events.push({ kind:"salary", label:"Salary", amount:salaryAmt, recurring:true }); }
+        // Salary (amount depends on the month, via overrides)
+        if (payDay && thisDOM === payDay) {
+          const sal = salaryForDay(d);
+          if (sal > 0) { balance += sal; events.push({ kind:"salary", label:"Salary", amount:sal, recurring:true }); }
+        }
       }
 
       points.push({
@@ -1299,5 +1351,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
 </script>
 </body>
 </html>
+
 
 
