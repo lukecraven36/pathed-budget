@@ -24,6 +24,8 @@
 <script type="text/babel">
 
 const STORAGE_KEY = "budget-planner-v2";
+const ACCOUNTS_KEY = "budget-planner-accounts-v1";
+const ACTIVE_KEY = "budget-planner-active-v1";
 
 const CATEGORIES = [
   "Housing","Utilities","Groceries","Transport","Subscriptions",
@@ -102,29 +104,74 @@ function BudgetPlanner() {
   const [modal, setModal] = useState(null); // null | {type:'income'|'expense'|'setup', data?}
   const [toast, setToast] = useState(null);
   const [expFilter, setExpFilter] = useState("All");
+  const [accounts, setAccounts] = useState(null);   // { personal: {...}, joint: {...} }
+  const [activeAccount, setActiveAccount] = useState("personal");
   const toastTimer = useRef(null);
+  const accountsRef = useRef(null);
+
+  // Migrate a single account's legacy fields
+  const migrateAccount = (acc) => {
+    if (!acc) return { ...defaultState };
+    if (!acc.salaryOverrides) acc.salaryOverrides = {};
+    if (acc.salaryOverride != null && acc.salaryOverrideMonth) {
+      acc.salaryOverrides[acc.salaryOverrideMonth] = acc.salaryOverride;
+      acc.salaryOverride = null;
+      acc.salaryOverrideMonth = null;
+    }
+    return acc;
+  };
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      let loaded = saved ? JSON.parse(saved) : defaultState;
-      // Ensure salaryOverrides exists
-      if (!loaded.salaryOverrides) loaded.salaryOverrides = {};
-      // Migrate legacy single override into the map
-      if (loaded.salaryOverride !== null && loaded.salaryOverrideMonth) {
-        loaded.salaryOverrides[loaded.salaryOverrideMonth] = loaded.salaryOverride;
-        loaded.salaryOverride = null;
-        loaded.salaryOverrideMonth = null;
+      // New multi-account storage
+      const multiSaved = localStorage.getItem(ACCOUNTS_KEY);
+      if (multiSaved) {
+        const parsed = JSON.parse(multiSaved);
+        parsed.personal = migrateAccount(parsed.personal);
+        parsed.joint = migrateAccount(parsed.joint);
+        const active = localStorage.getItem(ACTIVE_KEY) || "personal";
+        setAccounts(parsed);
+        setActiveAccount(active);
+        setState(parsed[active]);
+      } else {
+        // Migrate from old single-account storage
+        const oldSaved = localStorage.getItem(STORAGE_KEY);
+        const personal = migrateAccount(oldSaved ? JSON.parse(oldSaved) : { ...defaultState });
+        const joint = { ...defaultState };
+        const accts = { personal, joint };
+        setAccounts(accts);
+        setActiveAccount("personal");
+        setState(personal);
+        localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accts));
+        localStorage.setItem(ACTIVE_KEY, "personal");
       }
-      setState(loaded);
-    } catch { setState(defaultState); }
+    } catch { setState(defaultState); setAccounts({ personal:{...defaultState}, joint:{...defaultState} }); }
     setLoaded(true);
   }, []);
 
+  // Persist active account's state into the accounts map + localStorage
   useEffect(() => {
-    if (!loaded || !state) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
-  }, [state, loaded]);
+    if (!loaded || !state || !accounts) return;
+    try {
+      const next = { ...accounts, [activeAccount]: state };
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(next));
+      localStorage.setItem(ACTIVE_KEY, activeAccount);
+      // keep accounts ref in sync without causing a render loop
+      accountsRef.current = next;
+    } catch(e) {}
+  }, [state, loaded, activeAccount]);
+
+  // Switch account: save current, load the other
+  const switchAccount = (target) => {
+    if (target === activeAccount) return;
+    const current = accountsRef.current || accounts;
+    const next = { ...current, [activeAccount]: state };
+    accountsRef.current = next;
+    setAccounts(next);
+    setActiveAccount(target);
+    setState(next[target] || { ...defaultState });
+    setView("dashboard");
+  };
 
   // ─── AUTO-RESET ON PAYDAY ──────────────────────────────────
   // When today is on or after the next pay date, and we haven't already reset
@@ -282,9 +329,30 @@ function BudgetPlanner() {
     </div>
   );
 
-  // First-time setup
+  // First-time setup for an account — keep the account switcher visible so the
+  // user can flip back, and allow a quick-start without full salary setup.
   if (!state.salarySetup) return (
-    <Setup onDone={data => { upd(()=>({...data, salarySetup:true})); }} />
+    <div style={{minHeight:"100vh",background:"#0a0c13",color:"#dde1f0",fontFamily:"'DM Sans',sans-serif"}}>
+      <GlobalStyles/>
+      <div style={{background:"#0d0f19",borderBottom:"1px solid #1c1f30",padding:"10px 16px"}}>
+        <div style={{maxWidth:600,margin:"0 auto",display:"flex",gap:6,background:"#13151f",borderRadius:12,padding:5}}>
+          {[
+            {id:"personal",label:"Personal",icon:"💳"},
+            {id:"joint",label:"Joint · Bills",icon:"🏠"},
+          ].map(acc=>(
+            <button key={acc.id} onClick={()=>switchAccount(acc.id)}
+              style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:7,
+                background:activeAccount===acc.id?"#6c8ef5":"transparent",
+                color:activeAccount===acc.id?"#0a0c13":"#8890a8",
+                border:"none",borderRadius:9,padding:"9px 12px",fontSize:13,fontWeight:600,
+                fontFamily:"inherit",cursor:"pointer"}}>
+              <span style={{fontSize:14}}>{acc.icon}</span>{acc.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <Setup accountName={activeAccount==="joint"?"Joint · Bills":"Personal"} onDone={data => { upd(()=>({...data, salarySetup:true})); }} />
+    </div>
   );
 
   return (
@@ -307,6 +375,25 @@ function BudgetPlanner() {
         <button className="icon-btn" onClick={()=>setView("settings")}>
           <Icon name="settings" size={18} color={view==="settings"?"#6c8ef5":"#8890a8"}/>
         </button>
+      </div>
+
+      {/* ── ACCOUNT SWITCHER ── */}
+      <div style={{background:"#0d0f19",borderBottom:"1px solid #1c1f30",padding:"10px 16px",position:"sticky",top:54,zIndex:49}}>
+        <div style={{maxWidth:600,margin:"0 auto",display:"flex",gap:6,background:"#13151f",borderRadius:12,padding:5}}>
+          {[
+            {id:"personal",label:"Personal",icon:"💳"},
+            {id:"joint",label:"Joint · Bills",icon:"🏠"},
+          ].map(acc=>(
+            <button key={acc.id} onClick={()=>switchAccount(acc.id)}
+              style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:7,
+                background:activeAccount===acc.id?"#6c8ef5":"transparent",
+                color:activeAccount===acc.id?"#0a0c13":"#8890a8",
+                border:"none",borderRadius:9,padding:"9px 12px",fontSize:13,fontWeight:600,
+                fontFamily:"inherit",cursor:"pointer",transition:"all .15s"}}>
+              <span style={{fontSize:14}}>{acc.icon}</span>{acc.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── CONTENT ── */}
@@ -387,36 +474,44 @@ function BudgetPlanner() {
 }
 
 // ─── SETUP ────────────────────────────────────────────────────
-function Setup({ onDone }) {
+function Setup({ onDone, accountName }) {
   const [salary, setSalary] = useState("");
   const [balance, setBalance] = useState("");
   const [payDate, setPayDate] = useState("");
+  const isJoint = accountName && accountName.toLowerCase().includes("joint");
 
   return (
-    <div style={{minHeight:"100vh",background:"#0a0c13",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'DM Sans',sans-serif"}}>
+    <div style={{minHeight:"calc(100vh - 60px)",background:"#0a0c13",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"'DM Sans',sans-serif"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
       <GlobalStyles/>
       <div style={{width:"100%",maxWidth:420}}>
+        {accountName && (
+          <div style={{display:"inline-block",background:"#13151f",border:"1px solid #2a2e45",borderRadius:20,padding:"4px 12px",fontSize:12,color:"#6c8ef5",fontWeight:600,marginBottom:14}}>
+            {isJoint?"🏠":"💳"} {accountName} account
+          </div>
+        )}
         <div style={{fontFamily:"Instrument Serif,serif",fontSize:36,color:"#6c8ef5",marginBottom:8,lineHeight:1.1}}>
-          Let's set up<br/><em>your budget.</em>
+          Let's set up<br/><em>this account.</em>
         </div>
-        <p style={{color:"#8890a8",fontSize:14,marginBottom:32,lineHeight:1.6}}>Three quick things and you're good to go.</p>
+        <p style={{color:"#8890a8",fontSize:14,marginBottom:32,lineHeight:1.6}}>
+          {isJoint?"Set the balance and a pay/top-up date. Salary is optional for a bills account.":"Three quick things and you're good to go."}
+        </p>
 
         <div style={{display:"flex",flexDirection:"column",gap:20}}>
-          <Field label="What's in your account right now? (£)" icon="💳">
+          <Field label="What's in this account right now? (£)" icon="💳">
             <input type="number" step="0.01" placeholder="e.g. 842.50" value={balance} onChange={e=>setBalance(e.target.value)}/>
           </Field>
-          <Field label="Monthly salary (£)" icon="💰">
-            <input type="number" step="0.01" placeholder="e.g. 2800.00" value={salary} onChange={e=>setSalary(e.target.value)}/>
+          <Field label={isJoint?"Monthly top-up / income (£) — optional":"Monthly salary (£)"} icon="💰">
+            <input type="number" step="0.01" placeholder={isJoint?"e.g. 1500.00":"e.g. 2800.00"} value={salary} onChange={e=>setSalary(e.target.value)}/>
           </Field>
-          <Field label="Next pay date" icon="📅">
+          <Field label={isJoint?"Next top-up / pay date":"Next pay date"} icon="📅">
             <input type="date" value={payDate} onChange={e=>setPayDate(e.target.value)}/>
           </Field>
         </div>
 
         <button
           onClick={()=>{
-            if(!balance||!salary) return;
+            if(!balance) return;
             onDone({ openingBalance:parseFloat(balance)||0, salaryAmount:parseFloat(salary)||0, nextPayDate:payDate, income:[], expenses:[] });
           }}
           style={{marginTop:32,width:"100%",background:"#6c8ef5",color:"#fff",border:"none",borderRadius:12,padding:"15px",fontSize:16,fontWeight:600,cursor:"pointer"}}>
@@ -1351,6 +1446,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
 </script>
 </body>
 </html>
+
 
 
 
