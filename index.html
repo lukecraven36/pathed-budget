@@ -81,6 +81,7 @@ const Icon = ({ name, size=18, color="currentColor" }) => {
     calendar: "M3 4h18v18H3zM16 2v4M8 2v4M3 10h18",
     alert: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
     sun: "M12 17a5 5 0 100-10 5 5 0 000 10zM12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42",
+    chart: "M3 3v18h18 M7 14l4-4 3 3 5-6",
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -296,6 +297,7 @@ function BudgetPlanner() {
         {view==="dashboard" && <Dashboard state={state} calc={calc} setModal={setModal} setView={setView} upd={upd} showToast={showToast}/>}
         {view==="expenses" && <Expenses state={state} upd={upd} calc={calc} setModal={setModal} showToast={showToast} expFilter={expFilter} setExpFilter={setExpFilter}/>}
         {view==="income" && <IncomeView state={state} upd={upd} calc={calc} setModal={setModal} showToast={showToast}/>}
+        {view==="analytics" && <Analytics state={state} calc={calc}/>}
         {view==="settings" && <Settings state={state} upd={upd} showToast={showToast}/>}
 
       </div>
@@ -306,6 +308,7 @@ function BudgetPlanner() {
           {id:"dashboard",icon:"home",label:"Home"},
           {id:"expenses",icon:"list",label:"Expenses"},
           {id:"income",icon:"income",label:"Income"},
+          {id:"analytics",icon:"chart",label:"Trends"},
         ].map(tab=>(
           <button key={tab.id} onClick={()=>setView(tab.id)}
             style={{flex:1,background:"none",border:"none",padding:"12px 8px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:view===tab.id?"#6c8ef5":"#555a72",transition:"color 0.15s"}}>
@@ -760,6 +763,226 @@ function IncomeView({ state, upd, calc, setModal, showToast }) {
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────
+// ─── ANALYTICS: 60-DAY BALANCE PROJECTION ─────────────────────
+function Analytics({ state, calc }) {
+  const fmt = n => "£" + Number(n).toLocaleString("en-GB",{minimumFractionDigits:0,maximumFractionDigits:0});
+  const fmtFull = n => "£" + Number(n).toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Build the 60-day projection
+  const projection = React.useMemo(() => {
+    const DAYS = 60;
+    const start = new Date(); start.setHours(0,0,0,0);
+    let balance = Number(state.openingBalance) || 0;
+
+    // Helper: day-of-month for recurring items
+    const dom = (dateStr) => {
+      if (!dateStr) return 1;
+      return new Date(dateStr).getDate();
+    };
+
+    // Salary: lands on nextPayDate, then monthly after
+    const payDay = state.nextPayDate ? new Date(state.nextPayDate).getDate() : null;
+    const salaryAmt = Number(state.salaryAmount) || 0;
+
+    const points = [];
+    for (let i = 0; i <= DAYS; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const thisDOM = d.getDate();
+
+      if (i > 0) {
+        // Expenses due this day (recurring = match day-of-month; one-off = match exact date)
+        state.expenses.forEach(e => {
+          const amt = Number(e.amount) || 0;
+          if (e.recurring) {
+            if (dom(e.date) === thisDOM) balance -= amt;
+          } else {
+            const ed = new Date(e.date); ed.setHours(0,0,0,0);
+            if (ed.getTime() === d.getTime() && !e.paid) balance -= amt;
+          }
+        });
+        // Additional income
+        state.income.forEach(inc => {
+          const amt = Number(inc.amount) || 0;
+          if (inc.recurring) {
+            if (dom(inc.date) === thisDOM) balance += amt;
+          } else {
+            const id = new Date(inc.date); id.setHours(0,0,0,0);
+            if (id.getTime() === d.getTime()) balance += amt;
+          }
+        });
+        // Salary
+        if (payDay && thisDOM === payDay && salaryAmt > 0) balance += salaryAmt;
+      }
+
+      points.push({
+        date: new Date(d),
+        balance: Math.round(balance * 100) / 100,
+        label: d.toLocaleDateString("en-GB",{day:"numeric",month:"short"}),
+      });
+    }
+    return points;
+  }, [state]);
+
+  const balances = projection.map(p => p.balance);
+  const minBal = Math.min(...balances, 0);
+  const maxBal = Math.max(...balances, 500);
+  const range = maxBal - minBal || 1;
+
+  // Zone colour for a balance
+  const zoneColor = (b) => b < 100 ? "#e85a5a" : b < 500 ? "#f5a66c" : "#5af5a6";
+  const zoneLabel = (b) => b < 100 ? "Low" : b < 500 ? "Caution" : "Healthy";
+
+  // Find key events: lowest point, first time crossing into red/orange
+  const lowest = projection.reduce((min,p) => p.balance < min.balance ? p : min, projection[0]);
+  const firstRed = projection.find(p => p.balance < 100);
+  const firstOrange = projection.find(p => p.balance < 500);
+
+  // Chart dimensions
+  const W = Math.max(projection.length * 18, 320);
+  const H = 280;
+  const padTop = 20, padBottom = 28;
+  const chartH = H - padTop - padBottom;
+  const yFor = (b) => padTop + chartH - ((b - minBal) / range) * chartH;
+  const xFor = (i) => (i / (projection.length - 1)) * (W - 20) + 10;
+
+  // Zone band y-positions
+  const y100 = yFor(100);
+  const y500 = yFor(500);
+  const y0 = yFor(minBal);
+
+  // Build the line path
+  const linePath = projection.map((p,i) => `${i===0?"M":"L"}${xFor(i).toFixed(1)},${yFor(p.balance).toFixed(1)}`).join(" ");
+  // Area fill under line
+  const areaPath = linePath + ` L${xFor(projection.length-1).toFixed(1)},${(padTop+chartH).toFixed(1)} L${xFor(0).toFixed(1)},${(padTop+chartH).toFixed(1)} Z`;
+
+  const scrollRef = React.useRef(null);
+
+  return (
+    <div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:26,marginBottom:4}}>Balance Trend</div>
+      <div style={{fontSize:13,color:"#8890a8",marginBottom:20}}>Next 60 days · projected day by day</div>
+
+      {/* Summary cards */}
+      <div style={{display:"flex",gap:10,marginBottom:18}}>
+        <div style={{flex:1,background:"#13151f",border:"1px solid #1c1f30",borderRadius:12,padding:14}}>
+          <div style={{fontSize:10,color:"#8890a8",textTransform:"uppercase",letterSpacing:0.5,fontWeight:600,marginBottom:6}}>Lowest point</div>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:24,color:zoneColor(lowest.balance)}}>{fmt(lowest.balance)}</div>
+          <div style={{fontSize:11,color:"#8890a8",marginTop:2}}>{lowest.label}</div>
+        </div>
+        <div style={{flex:1,background:"#13151f",border:"1px solid #1c1f30",borderRadius:12,padding:14}}>
+          <div style={{fontSize:10,color:"#8890a8",textTransform:"uppercase",letterSpacing:0.5,fontWeight:600,marginBottom:6}}>In 60 days</div>
+          <div style={{fontFamily:"Instrument Serif,serif",fontSize:24,color:zoneColor(projection[projection.length-1].balance)}}>{fmt(projection[projection.length-1].balance)}</div>
+          <div style={{fontSize:11,color:"#8890a8",marginTop:2}}>{projection[projection.length-1].label}</div>
+        </div>
+      </div>
+
+      {/* Warnings */}
+      {firstRed && (
+        <div style={{background:"#e85a5a18",border:"1px solid #e85a5a44",borderRadius:10,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+          <Icon name="alert" size={16} color="#e85a5a"/>
+          <div style={{fontSize:13,color:"#e8a5a5"}}>Balance drops below <strong>£100</strong> on <strong>{firstRed.label}</strong></div>
+        </div>
+      )}
+      {!firstRed && firstOrange && (
+        <div style={{background:"#f5a66c18",border:"1px solid #f5a66c44",borderRadius:10,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+          <Icon name="alert" size={16} color="#f5a66c"/>
+          <div style={{fontSize:13,color:"#f5c6a5"}}>Balance dips into caution zone on <strong>{firstOrange.label}</strong></div>
+        </div>
+      )}
+      {!firstOrange && (
+        <div style={{background:"#5af5a618",border:"1px solid #5af5a644",borderRadius:10,padding:"12px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+          <Icon name="check" size={16} color="#5af5a6"/>
+          <div style={{fontSize:13,color:"#a5f5c6"}}>Healthy balance throughout the next 60 days</div>
+        </div>
+      )}
+
+      {/* Zone legend */}
+      <div style={{display:"flex",gap:14,marginBottom:14,marginTop:16,fontSize:11,color:"#8890a8"}}>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:"#5af5a6"}}/>£500+</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:"#f5a66c"}}/>£100–500</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:3,background:"#e85a5a"}}/>Below £100</span>
+      </div>
+
+      {/* Chart - horizontal scroll */}
+      <div ref={scrollRef} style={{overflowX:"auto",background:"#0d0f19",border:"1px solid #1c1f30",borderRadius:12,padding:"8px 0",WebkitOverflowScrolling:"touch"}}>
+        <svg width={W} height={H} style={{display:"block"}}>
+          <defs>
+            <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#6c8ef5" stopOpacity="0.25"/>
+              <stop offset="100%" stopColor="#6c8ef5" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
+
+          {/* Zone bands */}
+          {/* Green zone: above 500 */}
+          {y500 > padTop && (
+            <rect x="0" y={padTop} width={W} height={Math.max(0,y500-padTop)} fill="#5af5a6" opacity="0.05"/>
+          )}
+          {/* Orange zone: 100-500 */}
+          {y100 > y500 && (
+            <rect x="0" y={Math.max(padTop,y500)} width={W} height={Math.max(0,y100-Math.max(padTop,y500))} fill="#f5a66c" opacity="0.06"/>
+          )}
+          {/* Red zone: below 100 */}
+          {(padTop+chartH) > y100 && (
+            <rect x="0" y={Math.max(padTop,y100)} width={W} height={Math.max(0,(padTop+chartH)-Math.max(padTop,y100))} fill="#e85a5a" opacity="0.07"/>
+          )}
+
+          {/* Zone threshold lines */}
+          {y500 >= padTop && y500 <= padTop+chartH && (
+            <line x1="0" y1={y500} x2={W} y2={y500} stroke="#5af5a6" strokeOpacity="0.3" strokeDasharray="3,3" strokeWidth="1"/>
+          )}
+          {y100 >= padTop && y100 <= padTop+chartH && (
+            <line x1="0" y1={y100} x2={W} y2={y100} stroke="#e85a5a" strokeOpacity="0.4" strokeDasharray="3,3" strokeWidth="1"/>
+          )}
+          {/* Zero line */}
+          {yFor(0) >= padTop && yFor(0) <= padTop+chartH && (
+            <line x1="0" y1={yFor(0)} x2={W} y2={yFor(0)} stroke="#555a72" strokeOpacity="0.5" strokeWidth="1"/>
+          )}
+
+          {/* Area + line */}
+          <path d={areaPath} fill="url(#areaGrad)"/>
+          <path d={linePath} fill="none" stroke="#6c8ef5" strokeWidth="2" strokeLinejoin="round"/>
+
+          {/* Points coloured by zone, every 5 days + key events */}
+          {projection.map((p,i) => {
+            const isKey = i===0 || i===projection.length-1 || p.date.getTime()===lowest.date.getTime() || i%10===0;
+            if (!isKey) return null;
+            return (
+              <g key={i}>
+                <circle cx={xFor(i)} cy={yFor(p.balance)} r="3.5" fill={zoneColor(p.balance)} stroke="#0d0f19" strokeWidth="1.5"/>
+                <text x={xFor(i)} y={H-10} fontSize="9" fill="#8890a8" textAnchor="middle">{p.date.getDate()}/{p.date.getMonth()+1}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div style={{fontSize:11,color:"#555a72",textAlign:"center",marginTop:8}}>← scroll to see all 60 days →</div>
+
+      {/* Upcoming events list */}
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:20,marginTop:28,marginBottom:12}}>Key moments</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <EventRow label="Today" value={fmtFull(projection[0].balance)} color={zoneColor(projection[0].balance)} sub={zoneLabel(projection[0].balance)}/>
+        <EventRow label={`Lowest · ${lowest.label}`} value={fmtFull(lowest.balance)} color={zoneColor(lowest.balance)} sub={zoneLabel(lowest.balance)}/>
+        <EventRow label={`Day 60 · ${projection[projection.length-1].label}`} value={fmtFull(projection[projection.length-1].balance)} color={zoneColor(projection[projection.length-1].balance)} sub={zoneLabel(projection[projection.length-1].balance)}/>
+      </div>
+      <div style={{height:80}}/>
+    </div>
+  );
+}
+
+function EventRow({ label, value, color, sub }) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#13151f",border:"1px solid #1c1f30",borderRadius:10,padding:"13px 16px"}}>
+      <div>
+        <div style={{fontSize:14,color:"#e8ecf5"}}>{label}</div>
+        <div style={{fontSize:11,color,marginTop:2,fontWeight:600}}>{sub}</div>
+      </div>
+      <div style={{fontFamily:"Instrument Serif,serif",fontSize:20,color}}>{value}</div>
+    </div>
+  );
+}
+
 function Settings({ state, upd, showToast }) {
   return (
     <div>
@@ -1019,3 +1242,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<BudgetPlanner/>);
 </script>
 </body>
 </html>
+
